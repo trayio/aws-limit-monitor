@@ -48,7 +48,7 @@ def ec2Alert(limit, usage, rgn):
 	ec2_message += limit 
 	ec2_message += "\nActual Usage: "
 	ec2_message += str(usage)
-	ec2_message += "\n"
+	ec2_message += "\n\n"
 	print ec2_message
 	return ec2_message;
 
@@ -64,7 +64,7 @@ def rdsAlert(limit, usage, rgn):
 	rds_message += limit 
 	rds_message += "\nActual Usage: "
 	rds_message += usage
-	rds_message += "\n"
+	rds_message += "\n\n"
 	print rds_message
 	return rds_message;
 
@@ -80,9 +80,25 @@ def cloudformationAlert(limit, usage, rgn):
 	cfn_message += str(limit) 
 	cfn_message += "\nActual Usage: "
 	cfn_message += str(usage)
-	cfn_message += "\n"
+	cfn_message += "\n\n"
 	print cfn_message
 	return cfn_message;
+
+
+
+def iamAlert(limit, usage, rgn):
+
+        iam_message = "IAM Limits"
+        iam_message += "\nRegion: " + rgn
+        iam_message += '\n------------------------'
+        iam_message += "\nStack Limit: "
+	iam_message += str(limit) 
+	iam_message += "\nActual Usage: "
+	iam_message += str(usage)
+	iam_message += "\n\n"
+	print iam_message
+	return iam_message;
+        
 
 
 def assume_role(accountID, rgn, event):
@@ -90,6 +106,7 @@ def assume_role(accountID, rgn, event):
 	ec2_message = ""
 	cfn_message = ""
 	rds_message = ""
+        iam_message = ""
 
 	client = boto3.client('sts')
 	response = client.assume_role(RoleArn='arn:aws:iam::'+accountID+':role/'+event['CheckRoleName'],
@@ -105,25 +122,24 @@ def assume_role(accountID, rgn, event):
 	##############
 	# call trusted advisor for the limit checks
 	##############
-	support_client = session.client('support', region_name='us-east-1')
-	response = support_client.describe_trusted_advisor_check_result(
-		checkId='eW7HH0l7J9',
-		language='en'
-	)
-	print "Contacting Trusted Advisor..."
+	# support_client = session.client('support', region_name='us-east-1')
+	# response = support_client.describe_trusted_advisor_check_result(
+	# 	checkId='eW7HH0l7J9',
+	# 	language='en'
+	# )
+	# print "Contacting Trusted Advisor..."
 
-	# parse the json and find flagged resources that are in warning mode
-	flag_list = response['result']['flaggedResources']
-	warn_list=[]
-	for fr in flag_list:
-		if fr['metadata'][5] != "Green":
-			warn_list.append(fr['metadata'][2]+'\n'+'Region: '+fr['metadata'][0]+'\n------------------------'+'\nResource Limit: '+fr['metadata'][3]+'\n'+'Resource Usage: '+fr['metadata'][4]+'\n')
-	if not warn_list:
-		print "TA all green"
-	else:
-		global ta_message 
-		ta_message = trustedAlert(warn_list)
-
+	# # parse the json and find flagged resources that are in warning mode
+	# flag_list = response['result']['flaggedResources']
+	# warn_list=[]
+	# for fr in flag_list:
+	# 	if fr['metadata'][5] != "Green":
+	# 		warn_list.append(fr['metadata'][2]+'\n'+'Region: '+fr['metadata'][0]+'\n------------------------'+'\nResource Limit: '+fr['metadata'][3]+'\n'+'Resource Usage: '+fr['metadata'][4]+'\n')
+	# if not warn_list:
+	# 	print "TA all green"
+	# else:
+	# 	global ta_message 
+	# 	ta_message = trustedAlert(warn_list)
 
 	###############
 	#call EC2 limits for rgn
@@ -179,17 +195,34 @@ def assume_role(accountID, rgn, event):
 		print rds_message
 
 
+        ##############
+        # call IAM limits for rgn
+        ##############
+        print "calling IAM limits"
+        iam_client = session.client('iam', region_name=rgn)
+        iam_limits = iam_client.get_account_summary()
+        for k in ['Groups', 'InstanceProfiles', 'Policies', 'PolicyVersionsInUse', 'Roles', 'ServerCertificates', 'Users']:
+                quota = iam_limits['SummaryMap'][k + 'Quota']
+                current = iam_limits['SummaryMap'][k]
+                if (float(current) / float(quota) >= 0.8):
+                        iam_message = iamAlert(quota, current, rgn)
+                        print iam_message
+
+
 	print "Assumed session for "+accountID+" in region "+rgn
  
-	rgn_message = ec2_message + cfn_message + rds_message
+	rgn_message = ec2_message + cfn_message + rds_message + iam_message
 
 	return rgn_message;
+
+
+        
 	
 def lambda_handler(event, context):
 
 	accountID = event['AccountId']
 	print 'accountID: ' + str(accountID)
-	header_message = "AWS account "+str(accountID)+" has limits approaching their upper threshold. Please take action accordingly.\n"
+	header_message = "AWS account "+str(accountID)+" has limits approaching their upper threshold. Please take action accordingly.\n\n"
 	sns_message = "" 
 
 	for rgn in event['RegionList']:
